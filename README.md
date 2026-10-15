@@ -1,118 +1,123 @@
-# AdaJEPA: An Adaptive Latent World Model
-
-**Abstract:** Latent world models enable planning from high-dimensional observations by predicting future states in a compact latent space. However, these models are typically kept frozen at test time: when their predictions become inaccurate, planning can fail, especially under test-time distribution shift. To address this, we propose AdaJEPA, an adaptive latent world model that performs test-time adaptation within the closed loop of model predictive control (MPC). After training, AdaJEPA plans and executes the first action chunk, uses the observed next-state transition as a self-supervised adaptation signal, and replans with the updated model. This closed-loop update continuously recalibrates the world model without additional expert demonstrations. Across a range of goal-reaching tasks, AdaJEPA substantially improves planning success with as few as one gradient step per MPC replanning step.
+# ALRA: Action-Latent Residual Adaptation for World Models
 
 <p align="center">
-  &#151; <a href="https://agenticlearning.ai/adajepa/"><b>View Paper Website</b></a> &#151;
-  <a href="https://arxiv.org/abs/2606.32026"><b>View Paper</b></a> &#151;
+  <a href="https://alra-neurips.github.io/"><b>Project page</b></a> &middot;
+  <a href="https://openreview.net/forum?id=r5DF75OXlT"><b>Paper</b></a>
 </p>
 
-![main_loop](assets/main_loop.png)
+ALRA adapts a pretrained latent world model to dynamics shifts at test time **without updating the model itself**.
+The visual, proprioceptive and action encoders and the predictor stay frozen; the only thing trained online is a
+zero-initialized affine residual on the action embedding (210 parameters). On PointMaze-Medium it matches the
+strongest [AdaJEPA](https://agenticlearning.ai/adajepa/) baseline, which fine-tunes ~10<sup>7</sup> parameters,
+under all three dynamics shifts.
 
+![architecture](assets/architecture.png)
 
-## Getting Started
+See the [project page](https://alra-neurips.github.io/) for rollout videos and more details.
 
-1. [Installation](#installation)
-2. [AdaJEPA](#adajepa)
-3. [Released Checkpoints and Eval Data](#released-checkpoints-and-eval-data)
-4. [Evaluation](#evaluation)
+## Code
 
-## Installation
+This repository is the [AdaJEPA codebase](https://github.com/agentic-learning-ai-lab/adajepa) with ALRA added. All other code is unchanged.
+
+| File | Change |
+|---|---|
+| `planning/residual_adapt.py` | **ALRA**: the action residual and its trainer |
+| `planning/adajepa_mpc.py` | `planner.adapt.mode`: `layer` (AdaJEPA) or `residual` (ALRA) |
+| `planning/adajepa.py` | `planner.adapt.predictor_block=first` for the `predfirst+enclast` baseline |
+| `conf/adajepa_plan_cem_maze.yaml` | the two options above |
+| `plan.py` | start/goal pairs strictly more than 3 cells apart; `weights_only=False` checkpoint loading |
+| `results.py` | reproduces the paper's tables from `logs/` |
+| `logs/` | the 80 evaluation runs reported in the paper |
+
+## Setup
 
 ```bash
-git clone https://github.com/agentic-learning-ai-lab/adajepa.git
-cd adajepa
 conda env create -f environment.yaml
 conda activate ts
 ```
 
-The environment is identical to [temporal-straightening](https://github.com/agentic-learning-ai-lab/temporal-straightening)'s; see its README for details. MuJoCo is only needed for the maze environments — PushT/PushObj evaluation works without it.
+Download the AdaJEPA [checkpoints](https://drive.google.com/drive/folders/11IVDIrVDU6W47txR_ku1RkhRUj9F4ybs?usp=sharing)
+and [medium-maze data](https://drive.google.com/drive/folders/1qbPO9MK7LwX2GBQq-fP_xXoy82wYlkde?usp=sharing), and place them at
+`checkpoints/mediummaze_dynamics_shift` and `data/point_maze_medium`.
 
-## AdaJEPA
+## Running
 
-This repository contains the AdaJEPA code on top of [temporal-straightening](https://github.com/agentic-learning-ai-lab/temporal-straightening) (itself built on [DINO-WM](https://github.com/gaoyuezhou/dino_wm)). The major changes are summarized below.
-
-| Component | What it does |
-|---|---|
-| `planning/adajepa.py` | `AdaJEPATrainer`: adapts the predictor (and optionally the encoder) using latent prediction loss |
-| `planning/adajepa_mpc.py` | `AdaJEPAMPCPlanner`: per-episode MPC with adaptation plugged into the replan loop |
-| `planning/image_corruption.py` | Eval-time visual shifts: blur / salt-and-pepper / dark applied to observations in code, plus env-rendered color shifts via `env_kwargs_override` |
-| `env/pointmaze/maze_model.py` | Eval-time dynamics shifts: `density_scale` / `damping_scale` kwargs rebuild the maze MJCF with scaled body density (mass) and joint damping, injected via `env_kwargs_override` |
-| `datasets/diverse_maze_goals.py` | Eval-time layout shifts: BFS distance-controlled (start, goal) sampling on held-out maze layouts, each eval episode built with its own maze |
-
-
-## Released Checkpoints and Eval Data
-
-Download the released [checkpoints and data](https://drive.google.com/drive/folders/11IVDIrVDU6W47txR_ku1RkhRUj9F4ybs?usp=sharing) (medium-maze data is hosted [separately](https://drive.google.com/drive/folders/1qbPO9MK7LwX2GBQq-fP_xXoy82wYlkde?usp=sharing)) and put them in `checkpoints/` and `data/` at the repo root. All released checkpoints include a decoder for visualization (see [Visualization](#visualization)). To train these world models yourself, use the training code in [temporal-straightening](https://github.com/agentic-learning-ai-lab/temporal-straightening).
-
-## Evaluation
-
-The default adaptation setting (used in the paper): one gradient step per MPC iteration on the predictor's last transformer layer and the encoder's head, with learning rates `adapt.lr=5e-4` / `adapt.encoder_lr=1e-5` and a `recent5` replay buffer of executed segments. Each evaluation sample adapts independently from the pretrained weights. All knobs live under the `planner.adapt` block of the config: `adapt.{lr,steps,optimizer,finetune_every,replay_buffer,finetune_encoder,encoder_lr,last_layer_only,encoder_last_layer_only}`. These defaults are a good starting point, but you may want to tune them to your setting (e.g. a larger test-time shift may need a larger lr and/or more steps).
-
-For the frozen baseline, use `planner._target_=planning.mpc.MPCPlanner '~planner.adapt'`, which skips adaptation and plans all samples in one batch (setting `planner.adapt.lr=0 planner.adapt.steps=0` is equivalent but slower).
-
-Run from the repo root:
+Each run evaluates one method under one shift for one seed (100 episodes):
 
 ```bash
-REPO=$(pwd)
-
-# shape shift: pick one of val_{T,L,Z,+,I,small_tee,square}
-python plan.py --config-name adajepa_plan_gd_pushobj.yaml \
-    ckpt_base_path=$REPO/checkpoints/pushobj_shape_shift \
-    eval_data_path=$REPO/data/pushobj_eval/val_I/plan_targets.pkl \
-    +wandb_logging=false
-
-# visual shift: corruption conditions on val_T
-python plan.py --config-name adajepa_plan_gd_pushobj.yaml \
-    ckpt_base_path=$REPO/checkpoints/pusht_visual_shift \
-    eval_data_path=$REPO/data/pushobj_eval/val_T/plan_targets.pkl \
-    ood_corruption=blur +wandb_logging=false    # blur | snp1 | dark (+ood_level=0.9)
-
-# visual shift: color conditions on val_T
-python plan.py --config-name adajepa_plan_gd_pushobj.yaml \
-    ckpt_base_path=$REPO/checkpoints/pusht_visual_shift \
-    eval_data_path=$REPO/data/pushobj_eval/val_T/plan_targets.pkl \
-    '++env_kwargs_override.agent_color=Red' +wandb_logging=false
-# red block: ++env_kwargs_override.color=Red ; red anchor: ++env_kwargs_override.goal_color=Red
-
-# dynamics shift: default and modified dynamics on medium maze
-python plan.py --config-name adajepa_plan_gd_maze.yaml \
-    ckpt_base_path=$REPO/checkpoints/mediummaze_dynamics_shift \
-    eval_data_path=$REPO/data/point_maze_medium +wandb_logging=false
-# low density:  ++env_kwargs_override.density_scale=0.2
-# high damping: ++env_kwargs_override.damping_scale=20
-
-# layout shift: BFS distance-controlled goals on held-out maze layouts
-python plan.py --config-name adajepa_plan_gd_diversemaze.yaml \
-    ckpt_base_path=$REPO/checkpoints/diversemaze_layout_shift \
-    eval_data_path=$REPO/data/diverse_maze +wandb_logging=false
+python plan.py --config-name adajepa_plan_cem_maze.yaml \
+    ckpt_base_path=$(pwd)/checkpoints/mediummaze_dynamics_shift \
+    model_name=mediummaze_dynamics_shift \
+    eval_data_path=$(pwd)/data/point_maze_medium \
+    n_evals=100 seed=53 +wandb_logging=false \
+    planner.adapt.mode=residual planner.adapt.lr=1e-2 \
+    ++env_kwargs_override.damping_scale=50
 ```
 
-CEM planning uses `--config-name adajepa_plan_cem_<env>.yaml` with the same arguments.
+Swap the last two lines for the method and shift you want:
 
-The multi-layout maze setting follows [PLDM](https://arxiv.org/abs/2502.14819): the world model is trained on a set of maze layouts and evaluated on held-out ones. To generate the full dataset, follow the [PLDM codebase](https://github.com/vladisai/PLDM) (`pldm_envs/diverse_maze`).
+| Method | Overrides |
+|---|---|
+| Frozen | `planner.adapt.mode=residual planner.adapt.lr=0.0 planner.adapt.steps=0` |
+| `predlast+enclast` (AdaJEPA) | `planner.adapt.mode=layer planner.adapt.predictor_block=last` |
+| `predfirst+enclast` (AdaJEPA) | `planner.adapt.mode=layer planner.adapt.predictor_block=first` |
+| ALRA | `planner.adapt.mode=residual planner.adapt.lr=<lr>` |
 
-### Visualization
+| Shift | Override | ALRA `lr` |
+|---|---|---|
+| No shift | none | `1e-2` |
+| Damping ×50 | `++env_kwargs_override.damping_scale=50` | `1e-2` |
+| Density ×0.2 | `++env_kwargs_override.density_scale=0.2` | `1e-4` |
+| Density ×10 | `++env_kwargs_override.density_scale=10.0` | `1e-4` |
 
-We additionally train a decoder for interpretability: the *Simulator* row shows real environment frames, the *Decoder* row shows the decoded imagination, and the *Goal* column shows the target (tags are red for AdaJEPA runs, blue for frozen). Enable it with `decode_for_viz=true`. The provided `pusht_visual_shift` ckpt was trained without a decoder, so it ships a probe decoder trained post-hoc on frozen in-distribution PushT latents.
+The paper uses seeds 53, 59, 61, 101 and 103.
 
-The shape and maze checkpoints ship the VQVAE decoder that was co-trained with the world model. The decoder reconstructs observations toward the structure it saw during training: e.g. the unseen I shape is rendered as training-like shapes in the Decoder row below.
+## Results
 
-<p align="center">
-  <img src="assets/shape_shift_adajepa.gif" width="49%" />
-  <img src="assets/shape_shift_frozen.gif" width="49%" />
-</p>
-<p align="center">
-  <i>Planning with an unseen I shape: AdaJEPA (left, red) reaches the goal; the frozen one (right, blue) does not.</i>
-</p>
+Success rate (%) on PointMaze-Medium, mean ± std over 5 seeds × 100 episodes; in parentheses, the gain over frozen.
 
-## Acknowledgement
+| Condition | Frozen | predlast+enclast | predfirst+enclast | ALRA (ours) |
+|---|---|---|---|---|
+| No shift | 82.4 ± 1.9 | 82.8 ± 3.6 (+0.4) | 83.4 ± 3.0 (+1.0) | 82.6 ± 1.9 (+0.2) |
+| Damping ×50 | 47.6 ± 3.2 | 54.0 ± 5.3 (+6.4) | 58.0 ± 2.6 (+10.4) | 57.8 ± 5.1 (+10.2) |
+| Density ×0.2 | 84.2 ± 3.1 | 86.8 ± 1.6 (+2.6) | 88.0 ± 3.2 (+3.8) | 89.0 ± 4.1 (+4.8) |
+| Density ×10 | 36.4 ± 5.9 | 39.6 ± 6.7 (+3.2) | 41.6 ± 6.9 (+5.2) | 41.2 ± 5.9 (+4.8) |
+| Adapted parameters | 0 | 9,935,648 | 9,934,840 | 210 |
 
-This repository builds on [temporal-straightening](https://github.com/agentic-learning-ai-lab/temporal-straightening) and [DINO-WM](https://github.com/gaoyuezhou/dino_wm). We are grateful to the authors for sharing open-source implementations.
+![adaptation curves](assets/adaptation_curves.png)
+
+The logs of every run are in `logs/<shift>/<method>/seed<seed>/`:
+
+| File | Contents |
+|---|---|
+| `overrides.yaml` | the settings that define this run |
+| `config.yaml` | the full resolved config |
+| `logs.json` | per-step planning metrics; the last line holds the final success rate |
+| `per_iter_logs.json` | success and adaptation loss for every episode and MPC step |
+
+`python results.py` recomputes the tables above (and the per-seed table) from these logs.
 
 ## Citation
 
-If you find this repo useful, please cite:
+If you find this work useful, please cite:
+
+```
+@inproceedings{
+soni2026alra,
+title={{ALRA}: Action-Latent Residual Adaptation for World Models},
+author={Krishnam Soni and Aditya Sehgal and Vedant Dave and Elmar Rueckert},
+booktitle={PTA: From Pretrained Representations to Acting Agents},
+year={2026},
+url={https://openreview.net/forum?id=r5DF75OXlT}
+}
+```
+
+## Acknowledgement
+
+This code builds on [AdaJEPA](https://github.com/agentic-learning-ai-lab/adajepa),
+[temporal-straightening](https://github.com/agentic-learning-ai-lab/temporal-straightening) and
+[DINO-WM](https://github.com/gaoyuezhou/dino_wm). We thank the authors for releasing their code.
+If you use this repository, please also cite AdaJEPA and temporal-straightening:
 
 ```
 @article{wang2026adajepa,

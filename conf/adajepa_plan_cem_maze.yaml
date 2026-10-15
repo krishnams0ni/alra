@@ -4,9 +4,9 @@ defaults:
 
 hydra:
   run:
-    dir: eval_outputs/${replace_slash:${model_name}}/cem_adajepalr${planner.adapt.lr}_steps${planner.adapt.steps}_seed${seed}
+    dir: eval_outputs/${replace_slash:${model_name}}/cem_adajepa_${planner.adapt.mode}_lr${planner.adapt.lr}_steps${planner.adapt.steps}_seed${seed}
   sweep:
-    dir: eval_outputs/${replace_slash:${model_name}}/cem_adajepalr${planner.adapt.lr}_steps${planner.adapt.steps}_seed${seed}
+    dir: eval_outputs/${replace_slash:${model_name}}/cem_adajepa_${planner.adapt.mode}_lr${planner.adapt.lr}_steps${planner.adapt.steps}_seed${seed}
     subdir: ${hydra.job.num}
   launcher:
     submitit_folder: ${hydra.sweep.dir}/.submitit/%j
@@ -48,6 +48,7 @@ planner:
 
   # --- AdaJEPA adaptation (paper setting; frozen baseline: adapt.lr=0 adapt.steps=0) ---
   adapt:
+    mode: layer                    # layer (AdaJEPA) | residual (ALRA)
     lr: 5e-4
     steps: 1
     optimizer: adam
@@ -56,6 +57,7 @@ planner:
     finetune_encoder: true         # adapt the encoder head too
     encoder_lr: 1e-5               # separate encoder LR (defaults to lr if null)
     last_layer_only: true          # predictor's last transformer layer only
+    predictor_block: last          # last | first
     encoder_last_layer_only: true  # encoder's last submodule only
   reuse_actions: true              # warm-start from unexecuted actions of previous replan
 

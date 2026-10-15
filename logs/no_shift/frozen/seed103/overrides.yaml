@@ -1,0 +1,9 @@
+- ckpt_base_path=/home/soni/alra/checkpoints/mediummaze_dynamics_shift
+- model_name=mediummaze_dynamics_shift
+- eval_data_path=/home/soni/alra/data/point_maze_medium
+- n_evals=100
+- seed=103
+- +wandb_logging=false
+- planner.adapt.mode=residual
+- planner.adapt.lr=0.0
+- planner.adapt.steps=0

@@ -384,7 +384,8 @@ class PlanWorkspace:
         cells = POINT_MAZE_MEDIUM_HARD_ALL_CELLS
         while True:
             i, j = rs.choice(len(cells), size=2, replace=False)
-            if np.linalg.norm(cells[i] - cells[j]) >= POINT_MAZE_MEDIUM_HARD_MIN_DIST:
+            # strict >, as in the ALRA runs
+            if np.linalg.norm(cells[i] - cells[j]) > POINT_MAZE_MEDIUM_HARD_MIN_DIST:
                 break
         start = self._sample_point_maze_cell_state(rs, cells[i : i + 1])
         goal = self._sample_point_maze_cell_state(rs, cells[j : j + 1])
@@ -535,7 +536,7 @@ def load_ckpt(snapshot_path, device):
     from models.dino import DinoV2Encoder
     _ = DinoV2Encoder('dinov2_vits14', 'x_norm_patchtokens')
     with snapshot_path.open("rb") as f:
-        payload = torch.load(f, map_location=device)
+        payload = torch.load(f, map_location=device, weights_only=False)
     loaded_keys = []
     result = {}
     for k, v in payload.items():

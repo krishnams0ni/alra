@@ -25,6 +25,7 @@ class AdaJEPATrainer:
         last_layer_only: bool = True,
         encoder_lr: float = None,
         encoder_last_layer_only: bool = True,
+        predictor_block: str = "last",
     ):
         self.wm = wm
         self.lr = lr
@@ -34,6 +35,7 @@ class AdaJEPATrainer:
         self.finetune_encoder = finetune_encoder
         self.last_layer_only = last_layer_only
         self.encoder_last_layer_only = encoder_last_layer_only
+        self.predictor_block = predictor_block
         self.device = next(wm.parameters()).device
         self.criterion = nn.MSELoss()
         self._ada_predictor_params = self._select_predictor_params()
@@ -73,7 +75,7 @@ class AdaJEPATrainer:
                 all_z = [self.wm.encode(o, a).detach() for o, a in segments]
 
         self._set_requires_grad(self.wm.predictor, self._ada_predictor_params, True)
-        self.wm.predictor.train()
+        self._set_train_mode(True)
         if self.finetune_encoder:
             self._set_requires_grad(self.wm.encoder, self._ada_encoder_params, True)
             self.wm.encoder.train()
@@ -101,7 +103,7 @@ class AdaJEPATrainer:
             step_losses.append(loss.item())
             log.info("AdaJEPA step %d/%d  pred_loss=%.6f", step + 1, self.steps, step_losses[-1])
 
-        self.wm.predictor.eval()
+        self._set_train_mode(False)
         self._set_requires_grad(self.wm.predictor, self._ada_predictor_params, False)
         if self.finetune_encoder:
             self.wm.encoder.eval()
@@ -118,6 +120,10 @@ class AdaJEPATrainer:
 
     def _select_predictor_params(self):
         predictor = self.wm.predictor
+        if self.predictor_block == "first":
+            params = list(predictor.transformer.layers[0].parameters())
+            log.info("AdaJEPA predictor adaptation restricted to first transformer block (%d tensors).", len(params))
+            return params
         if self.last_layer_only:
             params = list(predictor.transformer.layers[-1].parameters())
             params += list(predictor.transformer.norm.parameters())
@@ -157,6 +163,9 @@ class AdaJEPATrainer:
         params = list(encoder.parameters())
         log.info("AdaJEPA encoder adaptation uses full encoder params (%d tensors).", len(params))
         return params
+
+    def _set_train_mode(self, mode: bool):
+        self.wm.predictor.train(mode)
 
     @staticmethod
     def _set_requires_grad(module, ada_params, enabled: bool):

@@ -18,6 +18,7 @@ import torch
 
 from .adajepa import AdaJEPATrainer
 from .mpc import MPCPlanner, _cuda_sync
+from .residual_adapt import ResidualTrainer
 
 
 class AdaJEPAMPCPlanner(MPCPlanner):
@@ -26,16 +27,28 @@ class AdaJEPAMPCPlanner(MPCPlanner):
         adapt = dict(adapt) if adapt else {}
         self.adajepa_finetune_every = adapt.get("finetune_every", 1)
         self.replay_mode, self.replay_size = self._parse_replay_buffer(adapt.get("replay_buffer", False))
-        self.adajepa_trainer = AdaJEPATrainer(
-            wm=self.wm,
-            lr=adapt.get("lr", 5e-4),
-            steps=adapt.get("steps", 1),
-            optimizer_name=adapt.get("optimizer", "adam"),
-            finetune_encoder=adapt.get("finetune_encoder", True),
-            last_layer_only=adapt.get("last_layer_only", True),
-            encoder_lr=adapt.get("encoder_lr", None),
-            encoder_last_layer_only=adapt.get("encoder_last_layer_only", True),
-        )
+        mode = adapt.get("mode", "layer")
+        if mode == "residual":
+            self.adajepa_trainer = ResidualTrainer(
+                wm=self.wm,
+                lr=adapt.get("lr", 5e-4),
+                steps=adapt.get("steps", 1),
+                optimizer_name=adapt.get("optimizer", "adam"),
+            )
+        elif mode == "layer":
+            self.adajepa_trainer = AdaJEPATrainer(
+                wm=self.wm,
+                lr=adapt.get("lr", 5e-4),
+                steps=adapt.get("steps", 1),
+                optimizer_name=adapt.get("optimizer", "adam"),
+                finetune_encoder=adapt.get("finetune_encoder", True),
+                last_layer_only=adapt.get("last_layer_only", True),
+                encoder_lr=adapt.get("encoder_lr", None),
+                encoder_last_layer_only=adapt.get("encoder_last_layer_only", True),
+                predictor_block=adapt.get("predictor_block", "last"),
+            )
+        else:
+            raise ValueError(f"Invalid adapt.mode: {mode!r}; expected 'layer' or 'residual'")
         self._adajepa_loss_records = []
         self._records = []
         self._sample_idx = 0
